@@ -1,8 +1,11 @@
 # Python Tools for KDVS Data Management
 
-This repository contains two Python scripts designed to streamline data management and analysis for KDVS. 
-These tools help cross-reference plays on air with what we physically have and scrape data efficiently.
+## Background/Context
+To address two key challenges at KDVS Davis 90.3 FM — creating a backup database of our library website as we transition to a new platform and streamlining our chart reporting process to the NACC charts — I developed code to automate these tasks.
 
+The script scrapes data from our library site, converts it into a CSV, and cross-references it for charting purposes. Charting has been slow since we began using Spinitron as our tracking source, primarily because charting at KDVS involves reporting only tracks that are both physically in our library and played on-air. However, Spinitron also picks up plays from external sources like Spotify and other music platforms, which we don’t include in our reporting.
+
+Previously, this process required manually cross-referencing Spinitron’s tracked plays with our physical library records, a tedious and time-consuming task. Now, with this new automated solution, cross-referencing is entirely streamlined, saving significant time and effort while ensuring accuracy in our chart reporting.
 ---
 
 ## Contents
