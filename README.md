@@ -14,11 +14,11 @@ This repository contains the two python files and two corresponding packaged dmg
 
 1. **`CurrentScrape.py`**  
    A GUI-based scraper for retrieving and organizing KDVS "currents".
-2. **`CrossReferenceApp.py`**  
+2. **`ChartCrossReference.py`**  
    A tool to cross-reference Spinitron weekly plays with KDVS current albums.
 
 ---
-## 1. CurrentScrapeFINAL.py
+## 1. CurrentScrape.py
 
 ### Description
 A scraping tool with a GUI interface that collects data and generates a CSV file of KDVS currents.
@@ -34,7 +34,7 @@ A scraping tool with a GUI interface that collects data and generates a CSV file
 3. The script will scrape data and save it as a CSV.
 
 
-## 2. CrossReferenceApp.py
+## 2. ChartCrossReference.py
 
 ### Description
 This script takes in two CSV files:
