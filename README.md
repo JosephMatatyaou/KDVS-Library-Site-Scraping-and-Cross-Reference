@@ -7,7 +7,7 @@ The script scrapes data from our library site, converts it into a CSV, and cross
 
 Previously, this process required manually cross-referencing Spinitron’s tracked plays with our physical library records, a tedious and time-consuming task. Now, with this new automated solution, cross-referencing is entirely streamlined, saving significant time and effort while ensuring accuracy in our chart reporting.
 
-This repository contains the two python files and two corresponding packaged dmg files that run the library site scraping and the cross reference.
+This repository contains the two python files that run the library site scraping and the cross reference.
 ---
 
 ## Contents
