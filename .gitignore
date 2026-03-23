@@ -8,3 +8,4 @@ dist/
 .pyinstaller-cache/
 .venv
 .venv-intel
+.DS_Store
