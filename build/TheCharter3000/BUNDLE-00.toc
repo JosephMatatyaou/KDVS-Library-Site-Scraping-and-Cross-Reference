@@ -1,3 +1,0 @@
-([('TheCharter3000',
-   '/Users/josephmatatyaou/Desktop/KDVS-Library-Site-Scraping-and-Cross-Reference/dist/TheCharter3000',
-   'EXECUTABLE')],)

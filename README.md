@@ -1,66 +1,78 @@
-# Python Tools for KDVS Data Management
+# The Charter 3000
 
 ## Overview
-A cross-platform GUI application that fetches KDVS library albums and cross-references them with Spinitron play reports to separate true library plays from outside sources.
+This is a cross-platform Tkinter app that fetches KDVS library albums and cross-references them with Spinitron play reports so you can separate true library plays from outside sources.
 
-## Installation
+## Run From Python
 
 ### Prerequisites
-- Python 3.7+ (macOS, Windows, or Linux)
+- Python 3.11+ recommended
 
-### Quick Setup
-
-**Mac/Linux:**
+### Setup
 ```bash
-pip install -r requirements.txt
+python3 -m pip install -r requirements.txt
 python3 MergedKDVSApp.py
 ```
 
-**Windows:**
+## Build Shareable Apps
+
+### Build Requirements
 ```bash
-pip install -r requirements.txt
-python MergedKDVSApp.py
+python3 -m pip install -r requirements-build.txt
 ```
+
+### macOS
+```bash
+chmod +x scripts/build_macos.sh
+./scripts/build_macos.sh
+```
+
+This creates `dist/TheCharter3000.app` and `dist/TheCharter3000-macOS.zip`.
+
+### Windows
+```powershell
+python -m pip install -r requirements-build.txt
+./scripts/build_windows.ps1
+```
+
+This creates `dist/TheCharter3000.exe` and `dist/TheCharter3000-Windows.zip`.
+
+## GitHub Releases
+
+Pushing a tag that starts with `v` triggers GitHub Actions to build both release artifacts and attach them to a GitHub release.
+
+```bash
+git add .
+git commit -m "Set up cross-platform app releases"
+git push origin <your-branch>
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+The release workflow uploads:
+- `TheCharter3000-macOS.zip`
+- `TheCharter3000-Windows.zip`
+
+## Important Signing Note
+
+These builds are unsigned by default.
+
+- macOS users may need to right-click the app and choose `Open` the first time.
+- Windows users may see a SmartScreen warning before launch.
+
+If you want to remove those warnings completely, the next step would be Apple code signing/notarization and a Windows code-signing certificate.
 
 ## Usage
 
-Run `MergedKDVSApp.py`:
-
-1. **Select Spinitron CSV** - Choose your Spinitron play report
-2. **Enter Date Filter** (YYYY-MM-DD) - Albums added after this date
-3. **Set Match Threshold** - Artist similarity score (0-100, default 75)
-4. **Click "Start Complete Analysis"** - The app will:
-   - Fetch albums from the KDVS library API (~1,000 albums)
-   - Cross-reference against your Spinitron data
-   - Save results sorted by play count (highest first)
+1. Select the Spinitron CSV export.
+2. Enter a tracking end date in `YYYY-MM-DD` format.
+3. Choose a match threshold from `0` to `100`.
+4. Save the output CSV when prompted.
 
 ## Output
-A CSV file with:
-- **Artist** - From Spinitron
-- **Count** - Play count (aggregated for duplicates)
-- **Current Album** - Matched KDVS album title
-- **Genre** - Album genre
 
-## Files
-- `MergedKDVSApp.py` - Main app (all-in-one workflow)
-- `requirements.txt` - Python dependencies
-- `CurrentScrape.py` - Legacy standalone scraper
-- `ChartCrossReference.py` - Legacy standalone cross-reference tool
-
-## Requirements
-```
-pandas>=1.3.0
-requests>=2.28.0
-rapidfuzz>=2.0.0
-```
-
-(All cross-platform - installs via `pip install -r requirements.txt`)
-
-Update that path in the app or use the browse button if your ChromeDriver lives elsewhere.
-
-## Run
-Launch the combined app with:
-
-```bash
-python MergedKDVSApp.py
-```
+The exported CSV includes:
+- `Artist`
+- `Count`
+- `Current Album`
+- `Genre`

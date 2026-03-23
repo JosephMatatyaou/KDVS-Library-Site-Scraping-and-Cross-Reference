@@ -1,9 +1,15 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+from pathlib import Path
+
+
+project_root = Path(SPECPATH)
+icon_path = project_root / "assets" / "icon.png"
+
 
 a = Analysis(
     ['MergedKDVSApp.py'],
-    pathex=[],
+    pathex=[str(project_root)],
     binaries=[],
     datas=[],
     hiddenimports=[],
@@ -19,9 +25,8 @@ pyz = PYZ(a.pure)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
     [],
+    exclude_binaries=True,
     name='TheCharter3000',
     debug=False,
     bootloader_ignore_signals=False,
@@ -35,10 +40,20 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=str(icon_path),
+)
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    name='TheCharter3000',
 )
 app = BUNDLE(
-    exe,
+    coll,
     name='TheCharter3000.app',
-    icon=None,
-    bundle_identifier=None,
+    icon=str(icon_path),
+    bundle_identifier='org.kdvs.thecharter3000',
 )
