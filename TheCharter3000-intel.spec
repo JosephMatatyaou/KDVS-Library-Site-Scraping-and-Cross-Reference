@@ -1,4 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
+# Build spec for Intel/x86_64 macOS builds
 
 from pathlib import Path
 
@@ -37,7 +38,7 @@ exe = EXE(
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
-    target_arch='arm64',
+    target_arch='x86_64',
     codesign_identity=None,
     entitlements_file=None,
     icon=str(icon_path),
