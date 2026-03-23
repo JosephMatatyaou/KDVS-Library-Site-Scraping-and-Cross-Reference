@@ -1,53 +1,60 @@
 # Python Tools for KDVS Data Management
 
-## Background
-This repository supports two KDVS workflows:
+## Overview
+A cross-platform GUI application that fetches KDVS library albums and cross-references them with Spinitron play reports to separate true library plays from outside sources.
 
-- scraping the KDVS library site into a CSV backup of current albums
-- cross-referencing Spinitron play reports against KDVS currents for charting
+## Installation
 
-Charting became slower after moving to Spinitron because not every logged play comes from a physical KDVS library item. These tools help separate true library plays from outside sources and reduce manual cross-checking.
+### Prerequisites
+- Python 3.7+ (macOS, Windows, or Linux)
+
+### Quick Setup
+
+**Mac/Linux:**
+```bash
+pip install -r requirements.txt
+python3 MergedKDVSApp.py
+```
+
+**Windows:**
+```bash
+pip install -r requirements.txt
+python MergedKDVSApp.py
+```
+
+## Usage
+
+Run `MergedKDVSApp.py`:
+
+1. **Select Spinitron CSV** - Choose your Spinitron play report
+2. **Enter Date Filter** (YYYY-MM-DD) - Albums added after this date
+3. **Set Match Threshold** - Artist similarity score (0-100, default 75)
+4. **Click "Start Complete Analysis"** - The app will:
+   - Fetch albums from the KDVS library API (~1,000 albums)
+   - Cross-reference against your Spinitron data
+   - Save results sorted by play count (highest first)
+
+## Output
+A CSV file with:
+- **Artist** - From Spinitron
+- **Count** - Play count (aggregated for duplicates)
+- **Current Album** - Matched KDVS album title
+- **Genre** - Album genre
 
 ## Files
-- `CurrentScrape.py`: the original standalone scraper GUI
-- `ChartCrossReference.py`: the original standalone cross-reference GUI
-- `MergedKDVSApp.py`: the newer combined app that includes both workflows in one Tkinter interface
-
-## Recommended Workflow
-Run `MergedKDVSApp.py` if you want the current all-in-one experience.
-
-1. Open the scraper tab and log in to the KDVS library site.
-2. Scrape currents for a given tracking end date and save the CSV.
-3. Move to the cross-reference tab.
-4. Pick a Spinitron CSV and either reuse the last scraped currents CSV or choose one manually.
-5. Export the matched chart-reference CSV.
-
-## Legacy Standalone Scripts
-The original scripts are still included if you want to keep using the split workflow:
-
-### `CurrentScrape.py`
-- GUI scraper for KDVS currents
-- saves a CSV of album metadata from the library site
-
-### `ChartCrossReference.py`
-- matches Spinitron artists against KDVS currents using fuzzy matching
-- exports a CSV with matched artist, album, genre, and a highlight flag when releases differ
+- `MergedKDVSApp.py` - Main app (all-in-one workflow)
+- `requirements.txt` - Python dependencies
+- `CurrentScrape.py` - Legacy standalone scraper
+- `ChartCrossReference.py` - Legacy standalone cross-reference tool
 
 ## Requirements
-Install the Python dependencies before running any of the apps:
-
-```bash
-pip install pandas rapidfuzz selenium
+```
+pandas>=1.3.0
+requests>=2.28.0
+rapidfuzz>=2.0.0
 ```
 
-`tkinter` is included with the standard Python installation on most macOS Python builds.
-
-## ChromeDriver
-`MergedKDVSApp.py` lets you choose a ChromeDriver binary from the GUI and defaults to:
-
-```text
-/Users/josephmatatyaou/Desktop/chromedriver-mac-arm64/chromedriver
-```
+(All cross-platform - installs via `pip install -r requirements.txt`)
 
 Update that path in the app or use the browse button if your ChromeDriver lives elsewhere.
 

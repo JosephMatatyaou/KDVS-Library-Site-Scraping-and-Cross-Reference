@@ -65,7 +65,7 @@ def fetch_currents_from_api(tracking_end_date, max_pages=None, progress_callback
                 "page": page,
             }
             
-            response = requests.get(API_BASE_URL, params=params, timeout=10)
+            response = requests.get(API_BASE_URL, params=params, timeout=None)
             response.raise_for_status()
             data = response.json()
             

@@ -36,7 +36,7 @@ jobs:
     - name: Build on Windows
       if: runner.os == 'Windows'
       run: |
-        pyinstaller --onefile --windowed --name "TheCharter3000" MergedKDVSApp.py
+        pyinstaller --onefile --windowed --icon=assets/icon.ico --name "TheCharter3000" MergedKDVSApp.py
         cd dist
         7z a TheCharter3000-Windows.zip TheCharter3000.exe
 
