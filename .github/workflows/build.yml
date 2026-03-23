@@ -24,7 +24,7 @@ jobs:
         name: TheCharter3000-Windows
         path: dist/TheCharter3000-Windows.zip
 
-  build-macos:
+  build-macos-arm64:
     runs-on: macos-latest
     steps:
     - uses: actions/checkout@v4
@@ -38,14 +38,32 @@ jobs:
     - run: ./scripts/build_macos.sh
     - uses: actions/upload-artifact@v4
       with:
-        name: TheCharter3000-macOS
-        path: dist/TheCharter3000-macOS.zip
+        name: TheCharter3000-macOS-arm64
+        path: dist/TheCharter3000-macOS-arm64.zip
+
+  build-macos-intel:
+    runs-on: macos-15-intel
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    - run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements-build.txt
+    - run: chmod +x ./scripts/build_macos_intel.sh
+    - run: PYTHON_BIN=python ./scripts/build_macos_intel.sh
+    - uses: actions/upload-artifact@v4
+      with:
+        name: TheCharter3000-macOS-intel
+        path: dist/TheCharter3000-macOS-intel.zip
 
   release:
     if: startsWith(github.ref, 'refs/tags/')
     needs:
     - build-windows
-    - build-macos
+    - build-macos-arm64
+    - build-macos-intel
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -57,6 +75,7 @@ jobs:
       with:
         files: |
           artifacts/TheCharter3000-Windows/TheCharter3000-Windows.zip
-          artifacts/TheCharter3000-macOS/TheCharter3000-macOS.zip
+          artifacts/TheCharter3000-macOS-arm64/TheCharter3000-macOS-arm64.zip
+          artifacts/TheCharter3000-macOS-intel/TheCharter3000-macOS-intel.zip
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

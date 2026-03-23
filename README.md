@@ -27,7 +27,15 @@ chmod +x scripts/build_macos.sh
 ./scripts/build_macos.sh
 ```
 
-This creates `dist/TheCharter3000.app` and `dist/TheCharter3000-macOS.zip`.
+This creates the shareable package `dist/TheCharter3000-macOS-arm64.zip`.
+
+### macOS Intel
+```bash
+chmod +x scripts/build_macos_intel.sh
+./scripts/build_macos_intel.sh
+```
+
+This creates the shareable package `dist/TheCharter3000-macOS-intel.zip`.
 
 ### Windows
 ```powershell
@@ -39,7 +47,7 @@ This creates `dist/TheCharter3000.exe` and `dist/TheCharter3000-Windows.zip`.
 
 ## GitHub Releases
 
-Pushing a tag that starts with `v` triggers GitHub Actions to build both release artifacts and attach them to a GitHub release.
+Pushing a tag that starts with `v` triggers GitHub Actions to build the Windows, macOS arm64, and macOS Intel artifacts and attach them to a GitHub release.
 
 ```bash
 git add .
@@ -50,7 +58,8 @@ git push origin v1.0.0
 ```
 
 The release workflow uploads:
-- `TheCharter3000-macOS.zip`
+- `TheCharter3000-macOS-arm64.zip`
+- `TheCharter3000-macOS-intel.zip`
 - `TheCharter3000-Windows.zip`
 
 ## Important Signing Note
@@ -65,9 +74,11 @@ If you want to remove those warnings completely, the next step would be Apple co
 ## Usage
 
 1. Select the Spinitron CSV export.
-2. Enter a tracking end date in `YYYY-MM-DD` format.
-3. Choose a match threshold from `0` to `100`.
-4. Save the output CSV when prompted.
+2. Enter your KDVS library site username and password.
+3. Enter the website search date in `YYYY-MM-DD` or `YYYYMMDD` format.
+4. The app logs in and submits the website's advanced album search without Selenium.
+5. Choose a match threshold from `0` to `100`.
+6. Save the output CSV when prompted.
 
 ## Output
 
