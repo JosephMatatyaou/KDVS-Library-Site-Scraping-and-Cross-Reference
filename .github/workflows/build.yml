@@ -44,14 +44,13 @@ jobs:
         path: dist/TheCharter3000-Windows.zip
 
   release:
-    needs: [build-macos, build-windows]
+    needs: build-windows
     runs-on: ubuntu-latest
     steps:
     - uses: actions/download-artifact@v4
     - uses: softprops/action-gh-release@v2
       with:
         files: |
-          TheCharter3000-macOS/TheCharter3000-macOS.zip
           TheCharter3000-Windows/TheCharter3000-Windows.zip
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
