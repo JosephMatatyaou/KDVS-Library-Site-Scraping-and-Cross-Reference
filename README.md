@@ -1,20 +1,24 @@
 # The Charter 3000
 
 ## Overview
+
 This is a cross-platform Tkinter app that fetches KDVS library albums and cross-references them with Spinitron play reports so you can separate true library plays from outside sources.
 
 ## Run From Python
 
 ### Prerequisites
+
 - Python 3.11+ recommended
 
 ### Setup
+
 ```bash
 python3 -m pip install -r requirements.txt
 python3 MergedKDVSApp.py
 ```
 
 ### Full Library Export
+
 ```bash
 python3 KDVSFullLibraryExport.py
 ```
@@ -22,6 +26,7 @@ python3 KDVSFullLibraryExport.py
 The exporter prompts for your KDVS username and password, then saves the full library catalog as `csv` by default.
 
 Optional example with an explicit output path:
+
 ```bash
 python3 KDVSFullLibraryExport.py --output kdvs_library.csv
 ```
@@ -29,11 +34,13 @@ python3 KDVSFullLibraryExport.py --output kdvs_library.csv
 ## Build Shareable Apps
 
 ### Build Requirements
+
 ```bash
 python3 -m pip install -r requirements-build.txt
 ```
 
 ### macOS
+
 ```bash
 chmod +x scripts/build_macos.sh
 ./scripts/build_macos.sh
@@ -42,6 +49,7 @@ chmod +x scripts/build_macos.sh
 This creates the shareable package `dist/TheCharter3000-macOS-arm64.zip`.
 
 ### macOS Intel
+
 ```bash
 chmod +x scripts/build_macos_intel.sh
 ./scripts/build_macos_intel.sh
@@ -50,6 +58,7 @@ chmod +x scripts/build_macos_intel.sh
 This creates the shareable package `dist/TheCharter3000-macOS-intel.zip`.
 
 ### Windows
+
 ```powershell
 python -m pip install -r requirements-build.txt
 ./scripts/build_windows.ps1
@@ -70,6 +79,7 @@ git push origin v1.0.0
 ```
 
 The release workflow uploads:
+
 - `TheCharter3000-macOS-arm64.zip`
 - `TheCharter3000-macOS-intel.zip`
 - `TheCharter3000-Windows.zip`
@@ -95,12 +105,14 @@ If you want to remove those warnings completely, the next step would be Apple co
 ## Output
 
 The exported CSV includes:
+
 - `Artist`
 - `Count`
 - `Current Album`
 - `Genre`
 
 The full-library exporter includes fields such as:
+
 - `pk`
 - `title`
 - `artists_joined`

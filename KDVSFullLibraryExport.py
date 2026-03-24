@@ -31,8 +31,10 @@ LOGIN_POST_URL = f"{BASE_URL}/login/"
 ALBUMS_URL = f"{BASE_URL}/library/albums/"
 API_ALBUMS_URL = f"{BASE_URL}/api/library/albums/"
 DEFAULT_PAGE_SIZE = 250
-DEFAULT_TIMEOUT = 60
+DEFAULT_TIMEOUT = 120
 DEFAULT_PAUSE_SECONDS = 0.05
+DEFAULT_REQUEST_RETRIES = 5
+DEFAULT_RETRY_BACKOFF = 2.0
 USER_AGENT = "KDVSFullLibraryExport/1.0"
 OUTPUT_SUFFIXES = {
     "csv": ".csv",
@@ -103,6 +105,24 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--request-timeout",
+        type=float,
+        default=DEFAULT_TIMEOUT,
+        help=f"Per-request timeout in seconds. Defaults to {DEFAULT_TIMEOUT}.",
+    )
+    parser.add_argument(
+        "--request-retries",
+        type=int,
+        default=DEFAULT_REQUEST_RETRIES,
+        help=f"How many times to retry a failed request. Defaults to {DEFAULT_REQUEST_RETRIES}.",
+    )
+    parser.add_argument(
+        "--retry-backoff",
+        type=float,
+        default=DEFAULT_RETRY_BACKOFF,
+        help=f"Base seconds for exponential retry backoff. Defaults to {DEFAULT_RETRY_BACKOFF}.",
+    )
+    parser.add_argument(
         "--max-pages",
         type=int,
         help="Optional testing limit for the number of API pages to fetch.",
@@ -116,6 +136,11 @@ def parse_args() -> argparse.Namespace:
         "--verbose",
         action="store_true",
         help="Print extra progress information while exporting.",
+    )
+    parser.add_argument(
+        "--fresh-start",
+        action="store_true",
+        help="Delete any partial export state for this output file and start over from page 1.",
     )
     return parser.parse_args()
 
@@ -136,6 +161,95 @@ def prompt_for_password(password: str | None) -> str:
     while not resolved_password:
         resolved_password = getpass("KDVS password: ")
     return resolved_password
+
+
+def initial_api_url(page_size: int) -> str:
+    return f"{API_ALBUMS_URL}?limit={page_size}"
+
+
+def partial_output_path(output_path: Path) -> Path:
+    return output_path.with_name(f"{output_path.name}.partial.jsonl")
+
+
+def state_output_path(output_path: Path) -> Path:
+    return output_path.with_name(f"{output_path.name}.state.json")
+
+
+def remove_if_exists(path: Path) -> None:
+    if path.exists():
+        path.unlink()
+
+
+def record_identifier(record: dict[str, Any]) -> str:
+    for key in ("pk", "api_url", "url"):
+        value = record.get(key)
+        if value not in (None, ""):
+            return str(value)
+    return ""
+
+
+def iter_partial_records(partial_path: Path):
+    if not partial_path.exists():
+        return
+
+    with partial_path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            stripped_line = line.strip()
+            if not stripped_line:
+                continue
+            yield json.loads(stripped_line)
+
+
+def load_seen_record_ids(partial_path: Path) -> set[str]:
+    seen_ids: set[str] = set()
+    for record in iter_partial_records(partial_path) or []:
+        record_id = record_identifier(record)
+        if record_id:
+            seen_ids.add(record_id)
+    return seen_ids
+
+
+def save_export_state(state_path: Path, state: dict[str, Any]) -> None:
+    state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def load_export_state(state_path: Path) -> dict[str, Any]:
+    return json.loads(state_path.read_text(encoding="utf-8"))
+
+
+def request_with_retries(
+    session: requests.Session,
+    method: str,
+    url: str,
+    *,
+    context: str,
+    timeout: float,
+    retries: int,
+    retry_backoff: float,
+    **kwargs: Any,
+) -> requests.Response:
+    last_error: Exception | None = None
+
+    for attempt in range(retries + 1):
+        try:
+            response = session.request(method, url, timeout=timeout, **kwargs)
+            if response.status_code in {408, 429} or response.status_code >= 500:
+                response.raise_for_status()
+            return response
+        except requests.RequestException as exc:
+            last_error = exc
+            if attempt >= retries:
+                break
+
+            sleep_seconds = retry_backoff * (2 ** attempt)
+            print_status(
+                f"{context} failed ({exc}). Retrying in {sleep_seconds:.1f}s "
+                f"({attempt + 1}/{retries})..."
+            )
+            time.sleep(sleep_seconds)
+
+    assert last_error is not None
+    raise last_error
 
 
 def extract_csrf_token(html: str) -> str:
@@ -163,13 +277,35 @@ def parse_json_response(response: requests.Response, context: str) -> dict[str, 
     return payload
 
 
-def login_to_kdvs(session: requests.Session, username: str, password: str) -> None:
-    login_page = session.get(LOGIN_URL, timeout=DEFAULT_TIMEOUT)
+def login_to_kdvs(
+    session: requests.Session,
+    username: str,
+    password: str,
+    *,
+    request_timeout: float,
+    request_retries: int,
+    retry_backoff: float,
+) -> None:
+    login_page = request_with_retries(
+        session,
+        "GET",
+        LOGIN_URL,
+        context="KDVS login page",
+        timeout=request_timeout,
+        retries=request_retries,
+        retry_backoff=retry_backoff,
+    )
     login_page.raise_for_status()
     csrf_token = extract_csrf_token(login_page.text)
 
-    response = session.post(
+    response = request_with_retries(
+        session,
+        "POST",
         LOGIN_POST_URL,
+        context="KDVS login submission",
+        timeout=request_timeout,
+        retries=request_retries,
+        retry_backoff=retry_backoff,
         data={
             "csrfmiddlewaretoken": csrf_token,
             "username": username,
@@ -177,11 +313,18 @@ def login_to_kdvs(session: requests.Session, username: str, password: str) -> No
             "next": "/",
         },
         headers={"Referer": LOGIN_URL},
-        timeout=DEFAULT_TIMEOUT,
     )
     response.raise_for_status()
 
-    albums_page = session.get(ALBUMS_URL, timeout=DEFAULT_TIMEOUT)
+    albums_page = request_with_retries(
+        session,
+        "GET",
+        ALBUMS_URL,
+        context="KDVS albums page after login",
+        timeout=request_timeout,
+        retries=request_retries,
+        retry_backoff=retry_backoff,
+    )
     albums_page.raise_for_status()
 
     if "Logout" not in albums_page.text and "/logout" not in albums_page.text:
@@ -241,6 +384,9 @@ def resolve_related_name(
     session: requests.Session,
     resource_url: str,
     cache: dict[str, str],
+    request_timeout: float,
+    request_retries: int,
+    retry_backoff: float,
     verbose: bool = False,
 ) -> str:
     if not resource_url:
@@ -250,10 +396,15 @@ def resolve_related_name(
         return cache[resource_url]
 
     try:
-        response = session.get(
+        response = request_with_retries(
+            session,
+            "GET",
             resource_url,
+            context=f"Related resource {resource_url}",
+            timeout=request_timeout,
+            retries=request_retries,
+            retry_backoff=retry_backoff,
             headers={"Accept": "application/json"},
-            timeout=DEFAULT_TIMEOUT,
         )
         response.raise_for_status()
         payload = parse_json_response(response, f"Related resource {resource_url}")
@@ -276,6 +427,9 @@ def normalize_album_record(
     record: dict[str, Any],
     session: requests.Session,
     format_name_cache: dict[str, str],
+    request_timeout: float,
+    request_retries: int,
+    retry_backoff: float,
     verbose: bool = False,
 ) -> dict[str, Any]:
     normalized = flatten_record(record)
@@ -303,6 +457,9 @@ def normalize_album_record(
             session,
             format_url,
             cache=format_name_cache,
+            request_timeout=request_timeout,
+            request_retries=request_retries,
+            retry_backoff=retry_backoff,
             verbose=verbose,
         )
 
