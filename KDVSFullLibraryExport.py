@@ -466,28 +466,139 @@ def normalize_album_record(
     return normalized
 
 
-def fetch_album_records(
+def append_records_to_partial(
+    partial_path: Path,
+    records: list[dict[str, Any]],
+    seen_ids: set[str],
+) -> int:
+    new_records = 0
+
+    with partial_path.open("a", encoding="utf-8") as handle:
+        for record in records:
+            record_id = record_identifier(record)
+            if record_id and record_id in seen_ids:
+                continue
+
+            handle.write(json.dumps(record, ensure_ascii=False))
+            handle.write("\n")
+            if record_id:
+                seen_ids.add(record_id)
+            new_records += 1
+
+    return new_records
+
+
+def finalize_csv_output(partial_path: Path, output_path: Path) -> None:
+    all_fields: set[str] = set()
+    seen_ids: set[str] = set()
+
+    for record in iter_partial_records(partial_path) or []:
+        record_id = record_identifier(record)
+        if record_id and record_id in seen_ids:
+            continue
+        if record_id:
+            seen_ids.add(record_id)
+        all_fields.update(record.keys())
+
+    fieldnames = ordered_fieldnames([{field: "" for field in all_fields}]) if all_fields else []
+
+    seen_ids.clear()
+    with output_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames, extrasaction="ignore")
+        writer.writeheader()
+
+        for record in iter_partial_records(partial_path) or []:
+            record_id = record_identifier(record)
+            if record_id and record_id in seen_ids:
+                continue
+            if record_id:
+                seen_ids.add(record_id)
+            writer.writerow(record)
+
+
+def finalize_jsonl_output(partial_path: Path, output_path: Path) -> None:
+    seen_ids: set[str] = set()
+
+    with output_path.open("w", encoding="utf-8") as handle:
+        for record in iter_partial_records(partial_path) or []:
+            record_id = record_identifier(record)
+            if record_id and record_id in seen_ids:
+                continue
+            if record_id:
+                seen_ids.add(record_id)
+            handle.write(json.dumps(record, ensure_ascii=False))
+            handle.write("\n")
+
+
+def finalize_json_output(partial_path: Path, output_path: Path) -> None:
+    records: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+
+    for record in iter_partial_records(partial_path) or []:
+        record_id = record_identifier(record)
+        if record_id and record_id in seen_ids:
+            continue
+        if record_id:
+            seen_ids.add(record_id)
+        records.append(record)
+
+    with output_path.open("w", encoding="utf-8") as handle:
+        json.dump(records, handle, ensure_ascii=False, indent=2)
+        handle.write("\n")
+
+
+def finalize_output(partial_path: Path, output_path: Path, output_format: str) -> None:
+    if output_format == "csv":
+        finalize_csv_output(partial_path, output_path)
+        return
+
+    if output_format == "jsonl":
+        finalize_jsonl_output(partial_path, output_path)
+        return
+
+    if output_format == "json":
+        finalize_json_output(partial_path, output_path)
+        return
+
+    raise ValueError(f"Unsupported output format: {output_format}")
+
+
+def fetch_album_records_to_partial(
     session: requests.Session,
+    partial_path: Path,
+    state_path: Path,
+    state: dict[str, Any],
+    seen_ids: set[str],
     *,
-    page_size: int,
     pause_seconds: float,
     max_pages: int | None,
     max_records: int | None,
+    request_timeout: float,
+    request_retries: int,
+    retry_backoff: float,
     verbose: bool,
-) -> tuple[list[dict[str, Any]], int | None]:
-    records: list[dict[str, Any]] = []
+) -> tuple[int | None, int]:
     format_name_cache: dict[str, str] = {}
-    next_url = API_ALBUMS_URL
-    params: dict[str, Any] | None = {"limit": page_size}
-    expected_total: int | None = None
-    page_number = 1
+    next_url = state["next_url"]
+    page_number = state["page_number"]
+    expected_total = state.get("expected_total")
 
     while next_url:
-        response = session.get(
+        if max_pages is not None and page_number > max_pages:
+            break
+
+        if max_records is not None and len(seen_ids) >= max_records:
+            break
+
+        response = request_with_retries(
+            session,
+            "GET",
             next_url,
-            params=params,
+            context=f"Album API page {page_number}",
+            timeout=request_timeout,
+            retries=request_retries,
+            retry_backoff=retry_backoff,
             headers={"Accept": "application/json"},
-            timeout=DEFAULT_TIMEOUT,
         )
         response.raise_for_status()
 
@@ -499,45 +610,54 @@ def fetch_album_records(
         if not isinstance(page_results, list):
             raise RuntimeError(f"Album API page {page_number} returned an unexpected results payload.")
 
+        remaining_records = None
+        if max_records is not None:
+            remaining_records = max_records - len(seen_ids)
+            if remaining_records <= 0:
+                break
+
+        normalized_records: list[dict[str, Any]] = []
         for record in page_results:
             if not isinstance(record, dict):
                 continue
-
-            records.append(
+            normalized_records.append(
                 normalize_album_record(
                     record,
                     session=session,
                     format_name_cache=format_name_cache,
+                    request_timeout=request_timeout,
+                    request_retries=request_retries,
+                    retry_backoff=retry_backoff,
                     verbose=verbose,
                 )
             )
-            if max_records is not None and len(records) >= max_records:
+            if remaining_records is not None and len(normalized_records) >= remaining_records:
                 break
 
-        page_count = len(page_results)
-        total_display = expected_total if expected_total is not None else "?"
-        print_status(
-            f"Fetched page {page_number}: {page_count} albums this page, {len(records)} total of {total_display}."
-        )
-
-        if max_records is not None and len(records) >= max_records:
-            break
-
-        if max_pages is not None and page_number >= max_pages:
-            break
+        append_records_to_partial(partial_path, normalized_records, seen_ids)
 
         raw_next_url = payload.get("next")
-        if not raw_next_url:
-            break
+        next_url = urljoin(response.url, str(raw_next_url)) if raw_next_url else None
+        state.update(
+            {
+                "next_url": next_url,
+                "page_number": page_number + 1,
+                "expected_total": expected_total,
+            }
+        )
+        save_export_state(state_path, state)
 
-        next_url = urljoin(response.url, str(raw_next_url))
-        params = None
-        page_number += 1
+        total_display = expected_total if expected_total is not None else "?"
+        print_status(
+            f"Fetched page {page_number}: {len(page_results)} albums this page, {len(seen_ids)} total of {total_display}."
+        )
 
-        if pause_seconds > 0:
+        if pause_seconds > 0 and next_url:
             time.sleep(pause_seconds)
 
-    return records, expected_total
+        page_number += 1
+
+    return expected_total, len(seen_ids)
 
 
 def default_output_path(output_format: str) -> Path:
@@ -573,52 +693,21 @@ def ordered_fieldnames(records: list[dict[str, Any]]) -> list[str]:
     return ordered
 
 
-def write_csv_output(records: list[dict[str, Any]], output_path: Path) -> None:
-    fieldnames = ordered_fieldnames(records)
-
-    with output_path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames, extrasaction="ignore")
-        writer.writeheader()
-        writer.writerows(records)
-
-
-def write_jsonl_output(records: list[dict[str, Any]], output_path: Path) -> None:
-    with output_path.open("w", encoding="utf-8") as handle:
-        for record in records:
-            handle.write(json.dumps(record, ensure_ascii=False))
-            handle.write("\n")
-
-
-def write_json_output(records: list[dict[str, Any]], output_path: Path) -> None:
-    with output_path.open("w", encoding="utf-8") as handle:
-        json.dump(records, handle, ensure_ascii=False, indent=2)
-        handle.write("\n")
-
-
-def write_output(records: list[dict[str, Any]], output_path: Path, output_format: str) -> None:
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    if output_format == "csv":
-        write_csv_output(records, output_path)
-        return
-
-    if output_format == "jsonl":
-        write_jsonl_output(records, output_path)
-        return
-
-    if output_format == "json":
-        write_json_output(records, output_path)
-        return
-
-    raise ValueError(f"Unsupported output format: {output_format}")
-
-
 def validate_args(args: argparse.Namespace) -> None:
     if args.page_size <= 0:
         raise ValueError("--page-size must be greater than 0.")
 
     if args.pause_seconds < 0:
         raise ValueError("--pause-seconds cannot be negative.")
+
+    if args.request_timeout <= 0:
+        raise ValueError("--request-timeout must be greater than 0.")
+
+    if args.request_retries < 0:
+        raise ValueError("--request-retries cannot be negative.")
+
+    if args.retry_backoff < 0:
+        raise ValueError("--retry-backoff cannot be negative.")
 
     if args.max_pages is not None and args.max_pages <= 0:
         raise ValueError("--max-pages must be greater than 0.")
@@ -639,40 +728,107 @@ def main() -> int:
         return 2
 
     output_path = resolve_output_path(args.output, args.format)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    partial_path = partial_output_path(output_path)
+    state_path = state_output_path(output_path)
+
+    if args.fresh_start:
+        remove_if_exists(output_path)
+        remove_if_exists(partial_path)
+        remove_if_exists(state_path)
+
+    if state_path.exists() and partial_path.exists():
+        state = load_export_state(state_path)
+        if state.get("output_format") != args.format:
+            print_status("Existing resume state uses a different output format. Re-run with --fresh-start.")
+            return 2
+        print_status(
+            f"Resuming export from page {state.get('page_number', '?')} using {partial_path.name}..."
+        )
+    else:
+        if state_path.exists() or partial_path.exists():
+            print_status(
+                "Found partial export files without a complete resume state. "
+                "Re-run with --fresh-start to restart cleanly."
+            )
+            return 2
+        if output_path.exists():
+            print_status(
+                f"{output_path.name} already exists. Use --fresh-start to overwrite it or choose a new --output."
+            )
+            return 2
+
+        state = {
+            "output_format": args.format,
+            "next_url": initial_api_url(args.page_size),
+            "page_number": 1,
+            "expected_total": None,
+        }
+        save_export_state(state_path, state)
+
+    seen_ids = load_seen_record_ids(partial_path)
+    if seen_ids:
+        print_status(f"Loaded {len(seen_ids)} already-saved albums from {partial_path.name}.")
 
     session = requests.Session()
     session.headers.update({"User-Agent": USER_AGENT})
 
     try:
         print_status(f"Logging into KDVS as {username}...")
-        login_to_kdvs(session, username, password)
+        login_to_kdvs(
+            session,
+            username,
+            password,
+            request_timeout=args.request_timeout,
+            request_retries=args.request_retries,
+            retry_backoff=args.retry_backoff,
+        )
 
         print_status("Starting API export...")
-        records, expected_total = fetch_album_records(
+        expected_total, saved_records = fetch_album_records_to_partial(
             session,
-            page_size=args.page_size,
+            partial_path,
+            state_path,
+            state,
             pause_seconds=args.pause_seconds,
             max_pages=args.max_pages,
             max_records=args.max_records,
+            seen_ids=seen_ids,
+            request_timeout=args.request_timeout,
+            request_retries=args.request_retries,
+            retry_backoff=args.retry_backoff,
             verbose=args.verbose,
         )
 
-        write_output(records, output_path, args.format)
+        print_status(f"Finalizing {args.format} output...")
+        finalize_output(partial_path, output_path, args.format)
+        remove_if_exists(partial_path)
+        remove_if_exists(state_path)
     except requests.RequestException as exc:
-        print_status(f"Network error while exporting KDVS library: {exc}")
+        print_status(
+            f"Network error while exporting KDVS library: {exc}\n"
+            f"Partial progress is saved in {partial_path.name}. "
+            "Run the same command again to resume, or add --fresh-start to restart."
+        )
         return 1
     except KeyboardInterrupt:
-        print_status("Export cancelled by user.")
+        print_status(
+            f"Export cancelled by user.\nPartial progress is saved in {partial_path.name}. "
+            "Run the same command again to resume."
+        )
         return 130
     except Exception as exc:
-        print_status(f"Export failed: {exc}")
+        print_status(
+            f"Export failed: {exc}\nPartial progress is saved in {partial_path.name}. "
+            "Run the same command again to resume, or add --fresh-start to restart."
+        )
         return 1
     finally:
         session.close()
 
     expected_text = expected_total if expected_total is not None else "unknown"
     print_status(
-        f"Export complete. Saved {len(records)} albums to {output_path} "
+        f"Export complete. Saved {saved_records} albums to {output_path} "
         f"(API reported {expected_text} total albums)."
     )
     return 0

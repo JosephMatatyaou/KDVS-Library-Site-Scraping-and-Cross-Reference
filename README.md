@@ -31,6 +31,8 @@ Optional example with an explicit output path:
 python3 KDVSFullLibraryExport.py --output kdvs_library.csv
 ```
 
+If the KDVS API times out mid-export, rerun the same command and the exporter resumes from its saved checkpoint. Use `--fresh-start` if you want to discard the partial export and restart from page 1.
+
 ## Build Shareable Apps
 
 ### Build Requirements
