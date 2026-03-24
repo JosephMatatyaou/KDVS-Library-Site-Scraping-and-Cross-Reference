@@ -1,0 +1,525 @@
+#!/usr/bin/env python3
+"""Export the full KDVS library album catalog via the site login + API.
+
+Example:
+    python3 KDVSFullLibraryExport.py
+
+If username or password are omitted, the script prompts for them securely.
+"""
+
+from __future__ import annotations
+
+import argparse
+import csv
+from datetime import datetime
+from getpass import getpass
+import json
+import os
+from pathlib import Path
+import re
+import sys
+import time
+from typing import Any
+from urllib.parse import urljoin
+
+import requests
+
+
+BASE_URL = "https://library.kdvs.org"
+LOGIN_URL = f"{BASE_URL}/login/?next=/"
+LOGIN_POST_URL = f"{BASE_URL}/login/"
+ALBUMS_URL = f"{BASE_URL}/library/albums/"
+API_ALBUMS_URL = f"{BASE_URL}/api/library/albums/"
+DEFAULT_PAGE_SIZE = 250
+DEFAULT_TIMEOUT = 60
+DEFAULT_PAUSE_SECONDS = 0.05
+USER_AGENT = "KDVSFullLibraryExport/1.0"
+OUTPUT_SUFFIXES = {
+    "csv": ".csv",
+    "json": ".json",
+    "jsonl": ".jsonl",
+}
+
+PREFERRED_FIELD_ORDER = [
+    "pk",
+    "title",
+    "artists_joined",
+    "artists_count",
+    "labels_count",
+    "genre",
+    "release_date",
+    "tracking_end_date",
+    "promoter",
+    "format_name",
+    "format_id",
+    "format",
+    "adder",
+    "created",
+    "modified",
+    "api_url",
+    "artists",
+    "labels",
+]
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Log into the KDVS library site, page through the album API, and export the full catalog.",
+    )
+    parser.add_argument(
+        "--username",
+        default=os.getenv("KDVS_USERNAME"),
+        help="KDVS site username. Falls back to KDVS_USERNAME, then prompts if still missing.",
+    )
+    parser.add_argument(
+        "--password",
+        default=os.getenv("KDVS_PASSWORD"),
+        help="KDVS site password. Falls back to KDVS_PASSWORD, then prompts if still missing.",
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        help="Output file path. If omitted, a timestamped filename is created in the current directory.",
+    )
+    parser.add_argument(
+        "--format",
+        choices=sorted(OUTPUT_SUFFIXES),
+        default="csv",
+        help="Export format. Defaults to csv.",
+    )
+    parser.add_argument(
+        "--page-size",
+        type=int,
+        default=DEFAULT_PAGE_SIZE,
+        help=f"Requested API page size. Defaults to {DEFAULT_PAGE_SIZE}.",
+    )
+    parser.add_argument(
+        "--pause-seconds",
+        type=float,
+        default=DEFAULT_PAUSE_SECONDS,
+        help=(
+            "Delay between page requests so the export stays polite to the KDVS server. "
+            f"Defaults to {DEFAULT_PAUSE_SECONDS}."
+        ),
+    )
+    parser.add_argument(
+        "--max-pages",
+        type=int,
+        help="Optional testing limit for the number of API pages to fetch.",
+    )
+    parser.add_argument(
+        "--max-records",
+        type=int,
+        help="Optional testing limit for the number of album records to export.",
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Print extra progress information while exporting.",
+    )
+    return parser.parse_args()
+
+
+def print_status(message: str) -> None:
+    print(message, file=sys.stderr, flush=True)
+
+
+def prompt_for_username(username: str | None) -> str:
+    resolved_username = (username or "").strip()
+    while not resolved_username:
+        resolved_username = input("KDVS username: ").strip()
+    return resolved_username
+
+
+def prompt_for_password(password: str | None) -> str:
+    resolved_password = password or ""
+    while not resolved_password:
+        resolved_password = getpass("KDVS password: ")
+    return resolved_password
+
+
+def extract_csrf_token(html: str) -> str:
+    patterns = [
+        r"name='csrfmiddlewaretoken' value='([^']+)'",
+        r'name="csrfmiddlewaretoken" value="([^"]+)"',
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, html)
+        if match:
+            return match.group(1)
+    raise RuntimeError("Could not find the KDVS login CSRF token.")
+
+
+def parse_json_response(response: requests.Response, context: str) -> dict[str, Any]:
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        snippet = " ".join(response.text.split())[:240]
+        raise RuntimeError(f"{context} did not return JSON. Response started with: {snippet}") from exc
+
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"{context} returned an unexpected JSON payload.")
+
+    return payload
+
+
+def login_to_kdvs(session: requests.Session, username: str, password: str) -> None:
+    login_page = session.get(LOGIN_URL, timeout=DEFAULT_TIMEOUT)
+    login_page.raise_for_status()
+    csrf_token = extract_csrf_token(login_page.text)
+
+    response = session.post(
+        LOGIN_POST_URL,
+        data={
+            "csrfmiddlewaretoken": csrf_token,
+            "username": username,
+            "password": password,
+            "next": "/",
+        },
+        headers={"Referer": LOGIN_URL},
+        timeout=DEFAULT_TIMEOUT,
+    )
+    response.raise_for_status()
+
+    albums_page = session.get(ALBUMS_URL, timeout=DEFAULT_TIMEOUT)
+    albums_page.raise_for_status()
+
+    if "Logout" not in albums_page.text and "/logout" not in albums_page.text:
+        raise RuntimeError("KDVS login failed. Please check your username and password.")
+
+
+def clean_string(value: str) -> str:
+    return value.strip()
+
+
+def clean_scalar(value: Any) -> Any:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return clean_string(value)
+    return value
+
+
+def flatten_record(record: dict[str, Any], prefix: str = "") -> dict[str, Any]:
+    flat_record: dict[str, Any] = {}
+
+    for key, value in record.items():
+        field_name = f"{prefix}.{key}" if prefix else key
+
+        if isinstance(value, dict):
+            nested = flatten_record(value, field_name)
+            if nested:
+                flat_record.update(nested)
+            else:
+                flat_record[field_name] = "{}"
+            continue
+
+        if isinstance(value, list):
+            cleaned_items = [clean_scalar(item) if not isinstance(item, (dict, list)) else item for item in value]
+            flat_record[field_name] = json.dumps(cleaned_items, ensure_ascii=False)
+            continue
+
+        flat_record[field_name] = clean_scalar(value)
+
+    return flat_record
+
+
+def join_list_items(value: Any) -> str:
+    if not isinstance(value, list):
+        return ""
+
+    cleaned_items = [str(clean_scalar(item)) for item in value if clean_scalar(item) != ""]
+    return " | ".join(cleaned_items)
+
+
+def extract_related_id(resource_url: str) -> str:
+    match = re.search(r"/(\d+)/?$", resource_url.strip())
+    return match.group(1) if match else ""
+
+
+def resolve_related_name(
+    session: requests.Session,
+    resource_url: str,
+    cache: dict[str, str],
+    verbose: bool = False,
+) -> str:
+    if not resource_url:
+        return ""
+
+    if resource_url in cache:
+        return cache[resource_url]
+
+    try:
+        response = session.get(
+            resource_url,
+            headers={"Accept": "application/json"},
+            timeout=DEFAULT_TIMEOUT,
+        )
+        response.raise_for_status()
+        payload = parse_json_response(response, f"Related resource {resource_url}")
+
+        for key in ("name", "title", "label", "slug", "pk"):
+            value = payload.get(key)
+            if value not in (None, ""):
+                resolved_name = str(clean_scalar(value))
+                cache[resource_url] = resolved_name
+                return resolved_name
+    except Exception as exc:
+        if verbose:
+            print_status(f"Could not resolve related resource {resource_url}: {exc}")
+
+    cache[resource_url] = ""
+    return ""
+
+
+def normalize_album_record(
+    record: dict[str, Any],
+    session: requests.Session,
+    format_name_cache: dict[str, str],
+    verbose: bool = False,
+) -> dict[str, Any]:
+    normalized = flatten_record(record)
+
+    api_url = normalized.pop("url", "")
+    if api_url:
+        normalized["api_url"] = api_url
+
+    artists = record.get("artists")
+    if isinstance(artists, list):
+        normalized["artists"] = json.dumps([clean_scalar(item) for item in artists], ensure_ascii=False)
+        normalized["artists_joined"] = join_list_items(artists)
+        normalized["artists_count"] = len([item for item in artists if clean_scalar(item) != ""])
+
+    labels = record.get("labels")
+    if isinstance(labels, list):
+        normalized["labels"] = json.dumps(labels, ensure_ascii=False)
+        normalized["labels_count"] = len([item for item in labels if clean_scalar(item) != ""])
+
+    format_url = record.get("format")
+    if isinstance(format_url, str) and format_url.strip():
+        normalized["format"] = format_url.strip()
+        normalized["format_id"] = extract_related_id(format_url)
+        normalized["format_name"] = resolve_related_name(
+            session,
+            format_url,
+            cache=format_name_cache,
+            verbose=verbose,
+        )
+
+    return normalized
+
+
+def fetch_album_records(
+    session: requests.Session,
+    *,
+    page_size: int,
+    pause_seconds: float,
+    max_pages: int | None,
+    max_records: int | None,
+    verbose: bool,
+) -> tuple[list[dict[str, Any]], int | None]:
+    records: list[dict[str, Any]] = []
+    format_name_cache: dict[str, str] = {}
+    next_url = API_ALBUMS_URL
+    params: dict[str, Any] | None = {"limit": page_size}
+    expected_total: int | None = None
+    page_number = 1
+
+    while next_url:
+        response = session.get(
+            next_url,
+            params=params,
+            headers={"Accept": "application/json"},
+            timeout=DEFAULT_TIMEOUT,
+        )
+        response.raise_for_status()
+
+        payload = parse_json_response(response, f"Album API page {page_number}")
+        if expected_total is None and isinstance(payload.get("count"), int):
+            expected_total = payload["count"]
+
+        page_results = payload.get("results", [])
+        if not isinstance(page_results, list):
+            raise RuntimeError(f"Album API page {page_number} returned an unexpected results payload.")
+
+        for record in page_results:
+            if not isinstance(record, dict):
+                continue
+
+            records.append(
+                normalize_album_record(
+                    record,
+                    session=session,
+                    format_name_cache=format_name_cache,
+                    verbose=verbose,
+                )
+            )
+            if max_records is not None and len(records) >= max_records:
+                break
+
+        page_count = len(page_results)
+        total_display = expected_total if expected_total is not None else "?"
+        print_status(
+            f"Fetched page {page_number}: {page_count} albums this page, {len(records)} total of {total_display}."
+        )
+
+        if max_records is not None and len(records) >= max_records:
+            break
+
+        if max_pages is not None and page_number >= max_pages:
+            break
+
+        raw_next_url = payload.get("next")
+        if not raw_next_url:
+            break
+
+        next_url = urljoin(response.url, str(raw_next_url))
+        params = None
+        page_number += 1
+
+        if pause_seconds > 0:
+            time.sleep(pause_seconds)
+
+    return records, expected_total
+
+
+def default_output_path(output_format: str) -> Path:
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    suffix = OUTPUT_SUFFIXES[output_format]
+    return Path.cwd() / f"kdvs_full_library_{timestamp}{suffix}"
+
+
+def resolve_output_path(requested_path: Path | None, output_format: str) -> Path:
+    if requested_path is None:
+        return default_output_path(output_format)
+
+    suffix = OUTPUT_SUFFIXES[output_format]
+    if requested_path.suffix:
+        return requested_path
+    return requested_path.with_suffix(suffix)
+
+
+def ordered_fieldnames(records: list[dict[str, Any]]) -> list[str]:
+    all_fields: set[str] = set()
+    for record in records:
+        all_fields.update(record.keys())
+
+    ordered: list[str] = []
+    for field in PREFERRED_FIELD_ORDER:
+        if field in all_fields:
+            ordered.append(field)
+
+    for field in sorted(all_fields):
+        if field not in ordered:
+            ordered.append(field)
+
+    return ordered
+
+
+def write_csv_output(records: list[dict[str, Any]], output_path: Path) -> None:
+    fieldnames = ordered_fieldnames(records)
+
+    with output_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(records)
+
+
+def write_jsonl_output(records: list[dict[str, Any]], output_path: Path) -> None:
+    with output_path.open("w", encoding="utf-8") as handle:
+        for record in records:
+            handle.write(json.dumps(record, ensure_ascii=False))
+            handle.write("\n")
+
+
+def write_json_output(records: list[dict[str, Any]], output_path: Path) -> None:
+    with output_path.open("w", encoding="utf-8") as handle:
+        json.dump(records, handle, ensure_ascii=False, indent=2)
+        handle.write("\n")
+
+
+def write_output(records: list[dict[str, Any]], output_path: Path, output_format: str) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if output_format == "csv":
+        write_csv_output(records, output_path)
+        return
+
+    if output_format == "jsonl":
+        write_jsonl_output(records, output_path)
+        return
+
+    if output_format == "json":
+        write_json_output(records, output_path)
+        return
+
+    raise ValueError(f"Unsupported output format: {output_format}")
+
+
+def validate_args(args: argparse.Namespace) -> None:
+    if args.page_size <= 0:
+        raise ValueError("--page-size must be greater than 0.")
+
+    if args.pause_seconds < 0:
+        raise ValueError("--pause-seconds cannot be negative.")
+
+    if args.max_pages is not None and args.max_pages <= 0:
+        raise ValueError("--max-pages must be greater than 0.")
+
+    if args.max_records is not None and args.max_records <= 0:
+        raise ValueError("--max-records must be greater than 0.")
+
+
+def main() -> int:
+    args = parse_args()
+    username = prompt_for_username(args.username)
+    password = prompt_for_password(args.password)
+
+    try:
+        validate_args(args)
+    except ValueError as exc:
+        print_status(f"Argument error: {exc}")
+        return 2
+
+    output_path = resolve_output_path(args.output, args.format)
+
+    session = requests.Session()
+    session.headers.update({"User-Agent": USER_AGENT})
+
+    try:
+        print_status(f"Logging into KDVS as {username}...")
+        login_to_kdvs(session, username, password)
+
+        print_status("Starting API export...")
+        records, expected_total = fetch_album_records(
+            session,
+            page_size=args.page_size,
+            pause_seconds=args.pause_seconds,
+            max_pages=args.max_pages,
+            max_records=args.max_records,
+            verbose=args.verbose,
+        )
+
+        write_output(records, output_path, args.format)
+    except requests.RequestException as exc:
+        print_status(f"Network error while exporting KDVS library: {exc}")
+        return 1
+    except KeyboardInterrupt:
+        print_status("Export cancelled by user.")
+        return 130
+    except Exception as exc:
+        print_status(f"Export failed: {exc}")
+        return 1
+    finally:
+        session.close()
+
+    expected_text = expected_total if expected_total is not None else "unknown"
+    print_status(
+        f"Export complete. Saved {len(records)} albums to {output_path} "
+        f"(API reported {expected_text} total albums)."
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -14,6 +14,18 @@ python3 -m pip install -r requirements.txt
 python3 MergedKDVSApp.py
 ```
 
+### Full Library Export
+```bash
+python3 KDVSFullLibraryExport.py
+```
+
+The exporter prompts for your KDVS username and password, then saves the full library catalog as `csv` by default.
+
+Optional example with an explicit output path:
+```bash
+python3 KDVSFullLibraryExport.py --output kdvs_library.csv
+```
+
 ## Build Shareable Apps
 
 ### Build Requirements
@@ -87,3 +99,16 @@ The exported CSV includes:
 - `Count`
 - `Current Album`
 - `Genre`
+
+The full-library exporter includes fields such as:
+- `pk`
+- `title`
+- `artists_joined`
+- `artists_count`
+- `labels`
+- `labels_count`
+- `genre`
+- `release_date`
+- `tracking_end_date`
+- `format_name`
+- `adder`
